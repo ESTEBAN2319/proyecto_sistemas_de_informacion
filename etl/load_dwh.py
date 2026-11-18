@@ -1,23 +1,25 @@
 """
-ETL de AdventureWorks2025 hacia AdventureWorks_DWH.
+Fase 2. ETL de AdventureWorks2025 hacia AdventureWorks_DWH.
 
 Orden:
     1. Fabricar Dim_Date (calendario y año fiscal julio-junio).
     2. Extraer producto, cliente y territorio ya aplanados.
     3. MERGE de dimensiones por clave de negocio. IDENTITY asigna la surrogada.
-    4. Vaciar el hecho y volver a insertarlo, resolviendo esas surrogadas.
-    5. Publicar vw_Sales.
-    6. Abortar si el número de líneas o la suma de importes no cuadra.
+    4. Vaciar el hecho e insertarlo con canal, coste de la fecha y margen.
 
-Ejecutar dos veces seguidas: la segunda carga tiene que dejar el mismo
-número de filas en Fact_Sales.
+El tipo de cliente es Store si hay StoreID; si no, Person si hay PersonID.
+El canal sale de OnlineOrderFlag: 1 = Internet, 0 = Resto.
+El coste es el StandardCost vigente en OrderDate. Si no hay, UnitCost,
+LineCost y Margin quedan vacíos y la línea se conserva.
+
+Ejecutar dos veces seguidas: la segunda carga tiene que dejar los mismos
+conteos de filas, importe, canal y coste.
 """
 
 from __future__ import annotations
 
 from datetime import date, timedelta
 from decimal import Decimal
-from pathlib import Path
 
 import pandas as pd
 import pyodbc
@@ -25,8 +27,6 @@ import pyodbc
 SERVER = r"localhost\SQLEXPRESS"
 SOURCE_DB = "AdventureWorks2025"
 DWH_DB = "AdventureWorks_DWH"
-ROOT = Path(__file__).resolve().parents[1]
-VIEW_SQL = (ROOT / "sql" / "04_crear_vista_ventas.sql").read_text(encoding="utf-8")
 
 MESES = (
     "",
@@ -45,6 +45,16 @@ MESES = (
 )
 DIAS = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
 DESCONOCIDO = "Desconocido"
+
+ESPERADO_LINEAS = 121317
+ESPERADO_IMPORTE = Decimal("109846381.4250")
+ESPERADO_INTERNET_LINEAS = 60398
+ESPERADO_INTERNET_IMPORTE = Decimal("29358677.2207")
+ESPERADO_INTERNET_SIN_COSTE = 0
+ESPERADO_RESTO_LINEAS = 60919
+ESPERADO_RESTO_SIN_COSTE = 64
+ESPERADO_PERSONAS = 18484
+ESPERADO_TIENDAS = 1336
 
 
 def pick_driver() -> str:
@@ -70,8 +80,7 @@ def connect(database: str) -> pyodbc.Connection:
         "Trusted_Connection=yes;"
         "TrustServerCertificate=yes;"
     )
-    connection = pyodbc.connect(connection_string, autocommit=False)
-    return connection
+    return pyodbc.connect(connection_string, autocommit=False)
 
 
 def fetch_frame(connection: pyodbc.Connection, sql: str) -> pd.DataFrame:
@@ -112,8 +121,13 @@ def insert_many(
 def ensure_staging(cursor: pyodbc.Cursor) -> None:
     cursor.execute(
         """
-        IF OBJECT_ID(N'dbo.stg_Date', N'U') IS NULL
-        CREATE TABLE stg_Date (
+        DROP TABLE IF EXISTS dbo.stg_Fact;
+        DROP TABLE IF EXISTS dbo.stg_Product;
+        DROP TABLE IF EXISTS dbo.stg_Customer;
+        DROP TABLE IF EXISTS dbo.stg_Territory;
+        DROP TABLE IF EXISTS dbo.stg_Date;
+
+        CREATE TABLE dbo.stg_Date (
             DateKey INT NOT NULL,
             FullDate DATE NOT NULL,
             CalendarYear INT NOT NULL,
@@ -126,8 +140,7 @@ def ensure_staging(cursor: pyodbc.Cursor) -> None:
             DayOfWeekName VARCHAR(20) NOT NULL
         );
 
-        IF OBJECT_ID(N'dbo.stg_Product', N'U') IS NULL
-        CREATE TABLE stg_Product (
+        CREATE TABLE dbo.stg_Product (
             ProductAlternateKey INT NOT NULL,
             ProductName NVARCHAR(50) NOT NULL,
             ProductNumber NVARCHAR(25) NOT NULL,
@@ -136,33 +149,32 @@ def ensure_staging(cursor: pyodbc.Cursor) -> None:
             CategoryName NVARCHAR(50) NOT NULL
         );
 
-        IF OBJECT_ID(N'dbo.stg_Customer', N'U') IS NULL
-        CREATE TABLE stg_Customer (
+        CREATE TABLE dbo.stg_Customer (
             CustomerAlternateKey INT NOT NULL,
             CustomerType VARCHAR(10) NOT NULL,
             CustomerName NVARCHAR(150) NOT NULL
         );
 
-        IF OBJECT_ID(N'dbo.stg_Territory', N'U') IS NULL
-        CREATE TABLE stg_Territory (
+        CREATE TABLE dbo.stg_Territory (
             TerritoryAlternateKey INT NOT NULL,
             TerritoryName NVARCHAR(50) NOT NULL,
             CountryRegionCode NVARCHAR(3) NOT NULL,
             TerritoryGroup NVARCHAR(50) NOT NULL
         );
 
-        IF OBJECT_ID(N'dbo.stg_Fact', N'U') IS NULL
-        CREATE TABLE stg_Fact (
+        CREATE TABLE dbo.stg_Fact (
             ProductID INT NOT NULL,
             CustomerID INT NOT NULL,
             TerritoryID INT NOT NULL,
             OrderDateKey INT NOT NULL,
             SalesOrderNumber NVARCHAR(25) NOT NULL,
             SalesOrderDetailID INT NOT NULL,
+            Channel VARCHAR(10) NOT NULL,
             OrderQty SMALLINT NOT NULL,
             UnitPrice DECIMAL(19,4) NOT NULL,
             DiscountPct DECIMAL(9,4) NOT NULL,
-            SalesAmount DECIMAL(19,4) NOT NULL
+            SalesAmount DECIMAL(19,4) NOT NULL,
+            UnitCost DECIMAL(19,4) NULL
         );
         """
     )
@@ -349,12 +361,12 @@ def load_customers(cursor: pyodbc.Cursor, source: pyodbc.Connection) -> int:
         SELECT
             c.CustomerID AS CustomerAlternateKey,
             CASE
+                WHEN c.StoreID IS NOT NULL THEN 'Store'
                 WHEN c.PersonID IS NOT NULL THEN 'Person'
-                ELSE 'Store'
             END AS CustomerType,
             CASE
-                WHEN c.PersonID IS NOT NULL THEN CONCAT(p.FirstName, ' ', p.LastName)
-                ELSE s.Name
+                WHEN c.StoreID IS NOT NULL THEN s.Name
+                ELSE CONCAT(p.FirstName, ' ', p.LastName)
             END AS CustomerName
         FROM Sales.Customer AS c
         LEFT JOIN Person.Person AS p
@@ -415,12 +427,6 @@ def load_territories(cursor: pyodbc.Cursor, source: pyodbc.Connection) -> int:
     frame["CountryRegionCode"] = text_or_unknown(frame["CountryRegionCode"], 3)
     frame["TerritoryGroup"] = text_or_unknown(frame["TerritoryGroup"], 50)
     rows = plain_rows(frame)
-    null_territory = fetch_frame(
-        source,
-        "SELECT COUNT(*) AS PedidosSinTerritorio FROM Sales.SalesOrderHeader WHERE TerritoryID IS NULL",
-    )
-    if int(null_territory.loc[0, "PedidosSinTerritorio"]) > 0:
-        rows.append((-1, DESCONOCIDO, "N/A", DESCONOCIDO))
     cursor.execute("TRUNCATE TABLE stg_Territory")
     insert_many(
         cursor,
@@ -467,36 +473,55 @@ def load_facts(cursor: pyodbc.Cursor, source: pyodbc.Connection) -> tuple[int, D
         SELECT
             d.ProductID,
             h.CustomerID,
-            COALESCE(h.TerritoryID, -1) AS TerritoryID,
-            h.OrderDate,
+            h.TerritoryID,
+            CONVERT(int, CONVERT(char(8), h.OrderDate, 112)) AS OrderDateKey,
             h.SalesOrderNumber,
             d.SalesOrderDetailID,
+            CASE WHEN h.OnlineOrderFlag = 1 THEN 'Internet' ELSE 'Resto' END AS Channel,
             d.OrderQty,
             CAST(d.UnitPrice AS decimal(19,4)) AS UnitPrice,
             CAST(d.UnitPriceDiscount AS decimal(9,4)) AS DiscountPct,
-            CAST(d.LineTotal AS decimal(19,4)) AS SalesAmount
+            CAST(d.LineTotal AS decimal(19,4)) AS SalesAmount,
+            CAST(c.StandardCost AS decimal(19,4)) AS UnitCost
         FROM Sales.SalesOrderDetail AS d
         INNER JOIN Sales.SalesOrderHeader AS h
             ON h.SalesOrderID = d.SalesOrderID
+        LEFT JOIN Production.ProductCostHistory AS c
+            ON c.ProductID = d.ProductID
+           AND c.StartDate <= h.OrderDate
+           AND (c.EndDate IS NULL OR h.OrderDate <= c.EndDate)
         """
     )
     rows: list[tuple] = []
     amount = Decimal("0")
-    for product_id, customer_id, territory_id, order_date, number, line_id, qty, price, discount, sales in extract:
-        order_day = order_date.date() if hasattr(order_date, "date") else order_date
-        date_key = order_day.year * 10000 + order_day.month * 100 + order_day.day
+    for (
+        product_id,
+        customer_id,
+        territory_id,
+        date_key,
+        number,
+        line_id,
+        channel,
+        qty,
+        price,
+        discount,
+        sales,
+        unit_cost,
+    ) in extract:
         rows.append(
             (
                 int(product_id),
                 int(customer_id),
                 int(territory_id),
-                date_key,
+                int(date_key),
                 number,
                 int(line_id),
+                channel,
                 int(qty),
                 price,
                 discount,
                 sales,
+                unit_cost,
             )
         )
         amount += sales
@@ -508,8 +533,9 @@ def load_facts(cursor: pyodbc.Cursor, source: pyodbc.Connection) -> tuple[int, D
         """
         INSERT INTO stg_Fact (
             ProductID, CustomerID, TerritoryID, OrderDateKey, SalesOrderNumber,
-            SalesOrderDetailID, OrderQty, UnitPrice, DiscountPct, SalesAmount
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            SalesOrderDetailID, Channel, OrderQty, UnitPrice, DiscountPct,
+            SalesAmount, UnitCost
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
         sizes=[
@@ -519,9 +545,11 @@ def load_facts(cursor: pyodbc.Cursor, source: pyodbc.Connection) -> tuple[int, D
             pyodbc.SQL_INTEGER,
             (pyodbc.SQL_WVARCHAR, 25, 0),
             pyodbc.SQL_INTEGER,
+            (pyodbc.SQL_VARCHAR, 10, 0),
             pyodbc.SQL_SMALLINT,
             (pyodbc.SQL_DECIMAL, 19, 4),
             (pyodbc.SQL_DECIMAL, 9, 4),
+            (pyodbc.SQL_DECIMAL, 19, 4),
             (pyodbc.SQL_DECIMAL, 19, 4),
         ],
     )
@@ -530,7 +558,8 @@ def load_facts(cursor: pyodbc.Cursor, source: pyodbc.Connection) -> tuple[int, D
         """
         INSERT INTO Fact_Sales (
             ProductKey, CustomerKey, TerritoryKey, OrderDateKey, SalesOrderNumber,
-            SalesOrderDetailID, OrderQty, UnitPrice, DiscountPct, SalesAmount
+            SalesOrderDetailID, Channel, OrderQty, UnitPrice, DiscountPct,
+            SalesAmount, UnitCost, LineCost, Margin
         )
         SELECT
             p.ProductKey,
@@ -539,10 +568,14 @@ def load_facts(cursor: pyodbc.Cursor, source: pyodbc.Connection) -> tuple[int, D
             f.OrderDateKey,
             f.SalesOrderNumber,
             f.SalesOrderDetailID,
+            f.Channel,
             f.OrderQty,
             f.UnitPrice,
             f.DiscountPct,
-            f.SalesAmount
+            f.SalesAmount,
+            f.UnitCost,
+            CAST(f.UnitCost * f.OrderQty AS decimal(19,4)),
+            CAST(f.SalesAmount - (f.UnitCost * f.OrderQty) AS decimal(19,4))
         FROM stg_Fact AS f
         INNER JOIN Dim_Product AS p
             ON p.ProductAlternateKey = f.ProductID
@@ -575,6 +608,19 @@ def reconcile(cursor: pyodbc.Cursor, source: pyodbc.Connection, staged_rows: int
     cursor.execute(
         """
         SELECT
+            Channel,
+            COUNT(*) AS Lineas,
+            SUM(SalesAmount) AS Importe,
+            SUM(CASE WHEN UnitCost IS NULL THEN 1 ELSE 0 END) AS SinCoste,
+            SUM(CASE WHEN Margin IS NULL THEN 1 ELSE 0 END) AS SinMargen
+        FROM Fact_Sales
+        GROUP BY Channel
+        """
+    )
+    by_channel = {row.Channel: row for row in cursor.fetchall()}
+    cursor.execute(
+        """
+        SELECT
             SUM(CASE WHEN CustomerType = 'Person' THEN 1 ELSE 0 END) AS Personas,
             SUM(CASE WHEN CustomerType = 'Store' THEN 1 ELSE 0 END) AS Tiendas
         FROM Dim_Customer
@@ -582,28 +628,42 @@ def reconcile(cursor: pyodbc.Cursor, source: pyodbc.Connection, staged_rows: int
     )
     persons, stores = cursor.fetchone()
 
+    internet = by_channel.get("Internet")
+    resto = by_channel.get("Resto")
+    internet_rows = int(internet.Lineas) if internet else 0
+    internet_amount = internet.Importe if internet else Decimal("0")
+    internet_without_cost = int(internet.SinCoste) if internet else 0
+    resto_rows = int(resto.Lineas) if resto else 0
+    resto_without_cost = int(resto.SinCoste) if resto else 0
+    resto_without_margin = int(resto.SinMargen) if resto else 0
+
     print(f"Lineas origen:  {int(source_rows)}")
     print(f"Lineas staging: {staged_rows}")
     print(f"Lineas hecho:   {int(fact_rows)}")
     print(f"Importe origen:  {source_amount}")
     print(f"Importe staging: {staged_amount}")
     print(f"Importe hecho:   {fact_amount}")
+    print(f"Internet: {internet_rows} lineas, {internet_amount}, sin coste {internet_without_cost}")
+    print(f"Resto:    {resto_rows} lineas, sin coste {resto_without_cost}, sin margen {resto_without_margin}")
     print(f"Personas: {int(persons)} | Tiendas: {int(stores)}")
 
     errors: list[str] = []
-    if int(fact_rows) != int(source_rows) or int(fact_rows) != staged_rows:
-        errors.append("El hecho no conserva el grano de SalesOrderDetail.")
-    if fact_amount != source_amount or staged_amount != source_amount:
-        errors.append("La suma de SalesAmount no cuadra con LineTotal.")
-    if int(persons) != 19119 or int(stores) != 701:
-        errors.append("Dim_Customer no conserva 19119 personas y 701 tiendas.")
+    if int(fact_rows) != ESPERADO_LINEAS or int(source_rows) != ESPERADO_LINEAS or staged_rows != ESPERADO_LINEAS:
+        errors.append("El hecho no conserva 121317 lineas de SalesOrderDetail.")
+    if fact_amount != ESPERADO_IMPORTE or source_amount != ESPERADO_IMPORTE or staged_amount != ESPERADO_IMPORTE:
+        errors.append("La suma de SalesAmount no es 109846381.4250.")
+    if internet_rows != ESPERADO_INTERNET_LINEAS or internet_amount != ESPERADO_INTERNET_IMPORTE:
+        errors.append("El canal Internet no cuadra 60398 lineas y 29358677.2207.")
+    if internet_without_cost != ESPERADO_INTERNET_SIN_COSTE:
+        errors.append("Internet tiene filas sin coste.")
+    if resto_rows != ESPERADO_RESTO_LINEAS or resto_without_cost != ESPERADO_RESTO_SIN_COSTE:
+        errors.append("El canal Resto no cuadra 60919 lineas y 64 sin coste.")
+    if resto_without_margin != ESPERADO_RESTO_SIN_COSTE:
+        errors.append("Las 64 filas sin coste del resto no dejaron el margen vacio.")
+    if int(persons) != ESPERADO_PERSONAS or int(stores) != ESPERADO_TIENDAS:
+        errors.append("Dim_Customer no conserva 18484 personas y 1336 tiendas.")
     if errors:
         raise RuntimeError(" ".join(errors))
-
-
-def publish_view(cursor: pyodbc.Cursor) -> None:
-    statement = VIEW_SQL.replace("GO", "").strip()
-    cursor.execute(statement)
 
 
 def main() -> None:
@@ -622,9 +682,8 @@ def main() -> None:
         print(f"Dim_Territory: {territories}")
         staged_rows, staged_amount = load_facts(cursor, source)
         reconcile(cursor, source, staged_rows, staged_amount)
-        publish_view(cursor)
         warehouse.commit()
-        print("Carga confirmada. vw_Sales publicada.")
+        print("Carga confirmada.")
     except Exception:
         warehouse.rollback()
         raise

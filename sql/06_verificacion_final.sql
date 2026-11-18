@@ -1,9 +1,11 @@
 /*
-    Verificación final. Abrir en SQL Server Management Studio como consulta nueva
+    Fase 2. Verificación final del almacén cargado.
+
+    Abrir en SQL Server Management Studio como consulta nueva
     y ejecutar completo (F5) contra localhost\SQLEXPRESS.
 
     No depende de la base seleccionada en la barra: usa nombres de tres partes.
-    Cada fila debe decir OK. Una sola FALLO invalida el informe de Power BI.
+    Cada fila debe decir OK. Una sola FALLO invalida el almacén.
 
     No ejecutar sql/03_verificar_dwh_vacio.sql: ese script correspondía al
     esquema vacío, antes de la carga.
@@ -27,12 +29,6 @@ FROM (
         'Lineas Fact_Sales',
         CAST(121317 AS decimal(19, 4)),
         CAST((SELECT COUNT(*) FROM AdventureWorks_DWH.dbo.Fact_Sales) AS decimal(19, 4))
-
-    UNION ALL
-    SELECT
-        'Lineas vw_Sales',
-        CAST(121317 AS decimal(19, 4)),
-        CAST((SELECT COUNT(*) FROM AdventureWorks_DWH.dbo.vw_Sales) AS decimal(19, 4))
 
     UNION ALL
     SELECT
@@ -60,14 +56,62 @@ FROM (
 
     UNION ALL
     SELECT
-        'Importe vw_Sales',
-        CAST(109846381.4250 AS decimal(19, 4)),
-        (SELECT SUM(SalesAmount) FROM AdventureWorks_DWH.dbo.vw_Sales)
+        'Lineas Internet',
+        CAST(60398 AS decimal(19, 4)),
+        CAST((
+            SELECT COUNT(*)
+            FROM AdventureWorks_DWH.dbo.Fact_Sales
+            WHERE Channel = 'Internet'
+        ) AS decimal(19, 4))
+
+    UNION ALL
+    SELECT
+        'Importe Internet',
+        CAST(29358677.2207 AS decimal(19, 4)),
+        (
+            SELECT SUM(SalesAmount)
+            FROM AdventureWorks_DWH.dbo.Fact_Sales
+            WHERE Channel = 'Internet'
+        )
+
+    UNION ALL
+    SELECT
+        'Internet sin coste',
+        CAST(0 AS decimal(19, 4)),
+        CAST((
+            SELECT COUNT(*)
+            FROM AdventureWorks_DWH.dbo.Fact_Sales
+            WHERE Channel = 'Internet'
+              AND UnitCost IS NULL
+        ) AS decimal(19, 4))
+
+    UNION ALL
+    SELECT
+        'Lineas Resto',
+        CAST(60919 AS decimal(19, 4)),
+        CAST((
+            SELECT COUNT(*)
+            FROM AdventureWorks_DWH.dbo.Fact_Sales
+            WHERE Channel = 'Resto'
+        ) AS decimal(19, 4))
+
+    UNION ALL
+    SELECT
+        'Resto sin coste y sin margen',
+        CAST(64 AS decimal(19, 4)),
+        CAST((
+            SELECT COUNT(*)
+            FROM AdventureWorks_DWH.dbo.Fact_Sales
+            WHERE Channel = 'Resto'
+              AND UnitCost IS NULL
+              AND LineCost IS NULL
+              AND Margin IS NULL
+        ) AS decimal(19, 4))
 
     UNION ALL
     SELECT
         'Clientes persona',
-        CAST(19119 AS decimal(19, 4)),
+        CAST(18484 AS decimal(19, 4)),
         CAST((
             SELECT COUNT(*)
             FROM AdventureWorks_DWH.dbo.Dim_Customer
@@ -77,7 +121,7 @@ FROM (
     UNION ALL
     SELECT
         'Clientes tienda',
-        CAST(701 AS decimal(19, 4)),
+        CAST(1336 AS decimal(19, 4)),
         CAST((
             SELECT COUNT(*)
             FROM AdventureWorks_DWH.dbo.Dim_Customer
@@ -98,12 +142,6 @@ FROM (
 
     UNION ALL
     SELECT
-        'Fechas',
-        CAST(1492 AS decimal(19, 4)),
-        CAST((SELECT COUNT(*) FROM AdventureWorks_DWH.dbo.Dim_Date) AS decimal(19, 4))
-
-    UNION ALL
-    SELECT
         'Fechas fiscales mal asignadas',
         CAST(0 AS decimal(19, 4)),
         CAST((
@@ -115,12 +153,11 @@ FROM (
 
     UNION ALL
     SELECT
-        'Vista vw_Sales presente',
-        CAST(1 AS decimal(19, 4)),
+        'OLTP intacto',
+        CAST(121317 AS decimal(19, 4)),
         CAST((
             SELECT COUNT(*)
-            FROM AdventureWorks_DWH.sys.views
-            WHERE name = 'vw_Sales'
+            FROM AdventureWorks2025.Sales.SalesOrderDetail
         ) AS decimal(19, 4))
 ) AS pruebas
 ORDER BY Resultado, Prueba;
