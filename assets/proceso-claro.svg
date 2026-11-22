@@ -5,9 +5,6 @@
     <marker id="punta" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
       <path d="M0,0 L8,4 L0,8 Z" fill="#4a6816"/>
     </marker>
-    <filter id="brillo" x="-20%" y="-40%" width="140%" height="180%">
-      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#4a6816" flood-opacity="0.18"/>
-    </filter>
   </defs>
   <rect width="1080" height="568" rx="12" fill="#f4f7ef"/>
   <line x1="48" y1="122" x2="1032" y2="122" stroke="#d3dcc8" stroke-width="2"/>
@@ -73,7 +70,7 @@
       <rect x="24" y="372" width="162" height="42" rx="8" fill="#ffffff" stroke="#4a6816"/>
       <text x="105" y="398" fill="#172016" font-size="14" text-anchor="middle">Dim_Product</text>
 
-      <rect x="206" y="364" width="168" height="70" rx="8" fill="#d4e35a" filter="url(#brillo)"/>
+      <rect x="206" y="364" width="168" height="70" rx="8" fill="#d4e35a"/>
       <text x="290" y="392" fill="#172016" font-size="16" font-weight="700" text-anchor="middle">Fact_Sales</text>
       <text x="290" y="412" fill="#172016" font-size="11" text-anchor="middle">línea de detalle</text>
 
@@ -85,7 +82,7 @@
     </g>
 
     <g>
-      <rect x="620" y="286" width="436" height="108" rx="8" fill="#ffffff" stroke="#4a6816" stroke-width="1.5" filter="url(#brillo)"/>
+      <rect x="620" y="286" width="436" height="108" rx="8" fill="#ffffff" stroke="#4a6816" stroke-width="1.5"/>
       <text x="644" y="324" fill="#4a6816" font-size="22" font-weight="700">Internet</text>
       <text x="644" y="350" fill="#3e4c38" font-size="14">OnlineOrderFlag = 1</text>
       <text x="644" y="372" fill="#172016" font-size="14">Entra en el informe</text>

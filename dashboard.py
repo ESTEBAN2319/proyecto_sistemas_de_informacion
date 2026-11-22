@@ -1,18 +1,23 @@
 """
 Dashboard de AdventureWorks. Cada informe es una página.
 
-Hecho en esta entrega: Proceso, Control, Tiempo y Producto y territorio.
+Hecho en esta entrega: Proceso, Control, Tiempo, Producto y territorio,
+y Clientes, precio y margen.
 Control enseña el canal internet y, aparte, el total del almacén.
 Sin filtros, internet tiene que ser 60.398 líneas y 29.358.677,22 USD.
 Tiempo abre con todo internet y luego admite filtros de año, territorio y categoría.
 El año es el natural y el mes se ordena por su número.
 Producto y territorio abre con todo internet: la categoría que explica el importe,
 los productos de mayor importe dentro de esa categoría y el territorio del pedido.
+Clientes, precio y margen abre con todo internet: cuántos clientes compran,
+qué parte del importe acumulan los diez de mayor importe, el precio medio de la línea
+y el margen de las líneas que tienen coste.
 """
 
 from __future__ import annotations
 
-from decimal import Decimal
+import math
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 import plotly.graph_objects as go
@@ -29,7 +34,11 @@ ESPERADO = {
     "Almacen": (121317, Decimal("109846381.4250")),
 }
 TOP_PRODUCTOS = 8
+TOP_CLIENTES = 10
+TOP_COMBINACIONES = 8
 BICI_AUSTRALIA_2024 = Decimal("3154931.6361")
+MARGEN_INTERNET = Decimal("12080883.6450")
+CLIENTES_INTERNET = 18484
 
 CONSULTA = """
 SELECT
@@ -85,6 +94,54 @@ GROUP BY
     p.ProductName
 """
 
+CONSULTA_CLIENTE = """
+SELECT
+    d.CalendarYear,
+    t.TerritoryName,
+    p.CategoryName,
+    c.CustomerKey,
+    MIN(c.CustomerName) AS CustomerName,
+    COUNT(*) AS Lineas,
+    SUM(f.SalesAmount) AS Importe,
+    SUM(CASE WHEN f.Margin IS NULL THEN 0 ELSE 1 END) AS LineasConCoste,
+    COALESCE(SUM(CASE WHEN f.Margin IS NULL THEN 0 ELSE f.SalesAmount END), 0) AS ImporteConCoste,
+    COALESCE(SUM(f.Margin), 0) AS Margen
+FROM dbo.Fact_Sales AS f
+INNER JOIN dbo.Dim_Date AS d
+    ON d.DateKey = f.OrderDateKey
+INNER JOIN dbo.Dim_Territory AS t
+    ON t.TerritoryKey = f.TerritoryKey
+INNER JOIN dbo.Dim_Product AS p
+    ON p.ProductKey = f.ProductKey
+INNER JOIN dbo.Dim_Customer AS c
+    ON c.CustomerKey = f.CustomerKey
+WHERE f.Channel = 'Internet'
+GROUP BY d.CalendarYear, t.TerritoryName, p.CategoryName, c.CustomerKey
+"""
+
+CONSULTA_MARGEN = """
+SELECT
+    d.CalendarYear,
+    t.TerritoryName,
+    p.CategoryName,
+    p.ProductName,
+    COUNT(*) AS Lineas,
+    SUM(f.SalesAmount) AS Importe,
+    SUM(CASE WHEN f.Margin IS NULL THEN 0 ELSE 1 END) AS LineasConCoste,
+    COALESCE(SUM(CASE WHEN f.Margin IS NULL THEN 0 ELSE f.SalesAmount END), 0) AS ImporteConCoste,
+    COALESCE(SUM(f.Margin), 0) AS Margen
+FROM dbo.Fact_Sales AS f
+INNER JOIN dbo.Dim_Date AS d
+    ON d.DateKey = f.OrderDateKey
+INNER JOIN dbo.Dim_Territory AS t
+    ON t.TerritoryKey = f.TerritoryKey
+INNER JOIN dbo.Dim_Product AS p
+    ON p.ProductKey = f.ProductKey
+WHERE f.Channel = 'Internet'
+GROUP BY d.CalendarYear, t.TerritoryName, p.CategoryName, p.ProductName
+"""
+
+
 def elegir_controlador() -> str:
     instalados = list(pyodbc.drivers())
     for nombre in (
@@ -104,6 +161,10 @@ def a_decimal(valor) -> Decimal:
 def formato_importe(valor: Decimal, decimales: int) -> str:
     texto = f"{valor:,.{decimales}f}"
     return texto.replace(",", "X").replace(".", ",").replace("X", ".") + " USD"
+
+
+def moneda(valor: Decimal) -> str:
+    return formato_importe(valor.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), 2)
 
 
 def formato_lineas(valor: int) -> str:
@@ -336,9 +397,127 @@ def cargar_producto() -> dict:
     return {"filas": filas, "opciones": opciones_de(filas)}
 
 
+def medida(anio, territorio, categoria, lineas, importe, lineas_coste, importe_coste, margen):
+    return {
+        "anio": int(anio),
+        "territorio": str(territorio).strip(),
+        "categoria": str(categoria).strip(),
+        "lineas": int(lineas),
+        "importe": a_decimal(importe),
+        "lineas_coste": int(lineas_coste),
+        "importe_coste": a_decimal(importe_coste),
+        "margen": a_decimal(margen),
+    }
+
+
+def cuadrar_margen(filas: list[dict], origen: str) -> None:
+    cuadrar_internet(
+        sum(fila["lineas"] for fila in filas),
+        sum((fila["importe"] for fila in filas), Decimal("0")),
+        origen,
+    )
+    margen = a_decimal(sum((fila["margen"] for fila in filas), Decimal("0")))
+    if margen != MARGEN_INTERNET:
+        raise RuntimeError(f"{origen} no cuadra el margen: {margen} USD.")
+    sin_coste = sum(fila["lineas"] - fila["lineas_coste"] for fila in filas)
+    if sin_coste != 0:
+        raise RuntimeError(f"{origen} tiene {sin_coste} líneas de internet sin coste.")
+
+
+def cargar_cliente() -> dict:
+    conexion = conectar()
+    try:
+        cursor = conexion.cursor()
+        cursor.execute(CONSULTA_CLIENTE)
+        clientes = []
+        for (
+            anio,
+            territorio,
+            categoria,
+            cliente,
+            nombre,
+            lineas,
+            importe,
+            lineas_coste,
+            importe_coste,
+            margen,
+        ) in cursor.fetchall():
+            fila = medida(
+                anio,
+                territorio,
+                categoria,
+                lineas,
+                importe,
+                lineas_coste,
+                importe_coste,
+                margen,
+            )
+            fila["cliente"] = int(cliente)
+            fila["nombre"] = str(nombre).strip()
+            clientes.append(fila)
+        cursor.execute(CONSULTA_MARGEN)
+        productos = []
+        for (
+            anio,
+            territorio,
+            categoria,
+            producto,
+            lineas,
+            importe,
+            lineas_coste,
+            importe_coste,
+            margen,
+        ) in cursor.fetchall():
+            fila = medida(
+                anio,
+                territorio,
+                categoria,
+                lineas,
+                importe,
+                lineas_coste,
+                importe_coste,
+                margen,
+            )
+            fila["producto"] = str(producto).strip()
+            productos.append(fila)
+    finally:
+        conexion.close()
+
+    if not clientes or not productos:
+        raise RuntimeError("Internet no tiene filas para la página Clientes, precio y margen.")
+    cuadrar_margen(clientes, "El corte de clientes")
+    cuadrar_margen(productos, "El corte de margen")
+    distintos = {fila["cliente"] for fila in clientes}
+    if len(distintos) != CLIENTES_INTERNET:
+        raise RuntimeError(
+            f"Internet no tiene {CLIENTES_INTERNET} clientes: hay {len(distintos)}."
+        )
+    combinacion = sum(
+        (
+            fila["importe"]
+            for fila in productos
+            if fila["anio"] == 2024
+            and fila["territorio"] == "Australia"
+            and fila["categoria"] == "Bikes"
+        ),
+        Decimal("0"),
+    )
+    if a_decimal(combinacion) != BICI_AUSTRALIA_2024:
+        raise RuntimeError(
+            "Bikes, Australia y 2024 no cuadran en clientes: "
+            f"{a_decimal(combinacion)} USD."
+        )
+    return {
+        "clientes": clientes,
+        "productos": productos,
+        "opciones": opciones_de(clientes),
+    }
+
+
 CONTROL = None
 TIEMPO = None
 PRODUCTO = None
+CLIENTE = None
 ERROR_DATOS = None
 
 
@@ -375,9 +554,21 @@ def asegurar_producto():
     return PRODUCTO
 
 
+def asegurar_cliente():
+    global CLIENTE, ERROR_DATOS
+    if CLIENTE is not None or ERROR_DATOS is not None:
+        return CLIENTE
+    try:
+        CLIENTE = cargar_cliente()
+    except pyodbc.Error as exc:
+        ERROR_DATOS = str(exc)
+    return CLIENTE
+
+
 asegurar_control()
 asegurar_tiempo()
 asegurar_producto()
+asegurar_cliente()
 
 
 def pregunta(texto: str) -> html.P:
@@ -678,6 +869,36 @@ def marcas_eje(maximo: float) -> tuple[float, list[float], list[str]]:
     return tope, marcas, textos
 
 
+def eje_legible(maximo: float) -> tuple[float, list[float], list[str]]:
+    if maximo <= 0:
+        return 1.0, [0.0, 1.0], ["0", "1"]
+    bruto = maximo * 1.18 / 5
+    exponente = math.floor(math.log10(bruto)) if bruto > 0 else 0
+    base = 10 ** exponente
+    paso = 10 * base
+    for factor in (1, 2, 2.5, 5, 10):
+        if factor * base >= bruto - 1e-9:
+            paso = factor * base
+            break
+    tope = 0.0
+    while tope < maximo * 1.12:
+        tope = round(tope + paso, 6)
+    marcas = []
+    marca = 0.0
+    while marca <= tope + paso / 100:
+        marcas.append(round(marca, 6))
+        marca = round(marca + paso, 6)
+    if paso >= 1000:
+        textos = [formato_lineas(int(round(valor))) for valor in marcas]
+    elif paso >= 1:
+        textos = [str(int(round(valor))) for valor in marcas]
+    elif paso >= 0.1:
+        textos = [f"{valor:.1f}".replace(".", ",") for valor in marcas]
+    else:
+        textos = [f"{valor:.2f}".replace(".", ",") for valor in marcas]
+    return tope, marcas, textos
+
+
 def figura_horizontal(
     etiquetas: list[str],
     importes: list[Decimal],
@@ -685,11 +906,19 @@ def figura_horizontal(
     alto: int,
     textos: list[str] | None = None,
     tema: str = "claro",
+    divisor: float = 1_000_000,
+    titulo_eje: str = "Millones USD",
+    modo_eje: str = "informe",
 ) -> go.Figure:
     tono = paleta(tema_valido(tema))
-    millones = [float(valor) / 1_000_000 for valor in importes]
+    millones = [float(valor) / divisor for valor in importes]
     maximo = max(millones) if millones else 0
-    tope, marcas, marcas_texto = marcas_eje(maximo)
+    if modo_eje == "libre":
+        tope, marcas, marcas_texto = eje_legible(maximo)
+        if len(marcas) > 1:
+            tope = tope + (marcas[1] - marcas[0]) * 0.6
+    else:
+        tope, marcas, marcas_texto = marcas_eje(maximo)
     barra = go.Bar(
         x=millones,
         y=etiquetas,
@@ -718,7 +947,7 @@ def figura_horizontal(
         showlegend=False,
         bargap=0.28,
         xaxis=dict(
-            title=dict(text="Millones USD", font=dict(size=12, color=tono["texto"])),
+            title=dict(text=titulo_eje, font=dict(size=12, color=tono["texto"])),
             gridcolor=tono["rejilla"],
             tickfont=dict(color=tono["eje"], size=12),
             zeroline=False,
@@ -1404,6 +1633,345 @@ def vista_producto() -> html.Div:
     )
 
 
+def filas_corte(filas: list[dict], territorio, categoria, anio) -> list[dict]:
+    salida = []
+    for fila in filas:
+        if territorio and fila["territorio"] != territorio:
+            continue
+        if categoria and fila["categoria"] != categoria:
+            continue
+        if anio is not None and fila["anio"] != anio:
+            continue
+        salida.append(fila)
+    return salida
+
+
+def agrupar(filas: list[dict], campos: tuple[str, ...]) -> list[dict]:
+    grupos: dict[tuple, dict] = {}
+    for fila in filas:
+        llave = tuple(fila[campo] for campo in campos)
+        grupo = grupos.get(llave)
+        if grupo is None:
+            grupo = {campo: fila[campo] for campo in campos}
+            grupo["importe"] = Decimal("0")
+            grupo["lineas"] = 0
+            grupo["margen"] = Decimal("0")
+            grupo["importe_coste"] = Decimal("0")
+            grupo["lineas_coste"] = 0
+            grupos[llave] = grupo
+        grupo["importe"] += fila["importe"]
+        grupo["lineas"] += fila["lineas"]
+        grupo["margen"] += fila["margen"]
+        grupo["importe_coste"] += fila["importe_coste"]
+        grupo["lineas_coste"] += fila["lineas_coste"]
+    salida = []
+    for grupo in grupos.values():
+        grupo["importe"] = a_decimal(grupo["importe"])
+        grupo["margen"] = a_decimal(grupo["margen"])
+        grupo["importe_coste"] = a_decimal(grupo["importe_coste"])
+        salida.append(grupo)
+    return salida
+
+
+def etiquetas_clientes(filas: list[dict]) -> list[str]:
+    cuentas: dict[str, int] = {}
+    for fila in filas:
+        cuentas[fila["nombre"]] = cuentas.get(fila["nombre"], 0) + 1
+    etiquetas = []
+    for fila in filas:
+        if cuentas[fila["nombre"]] > 1:
+            etiquetas.append(f"{fila['nombre']} ({fila['cliente']})")
+        else:
+            etiquetas.append(fila["nombre"])
+    return etiquetas
+
+
+def cobertura_coste(lineas: int, lineas_coste: int) -> str:
+    if lineas_coste == lineas:
+        return f"Las {formato_lineas(lineas)} líneas tienen coste."
+    return (
+        f"El margen usa {formato_lineas(lineas_coste)} líneas con coste. "
+        f"{formato_lineas(lineas - lineas_coste)} se quedan fuera porque no tienen coste."
+    )
+
+
+def tabla_combinaciones(filas: list[dict]) -> html.Div:
+    cabecera = html.Thead(
+        html.Tr(
+            [
+                html.Th("Categoría"),
+                html.Th("Territorio"),
+                html.Th("Año"),
+                html.Th("Importe", className="num"),
+                html.Th("Margen", className="num"),
+            ]
+        )
+    )
+    cuerpo = []
+    for fila in filas:
+        margen = "Sin coste" if fila["lineas_coste"] == 0 else moneda(fila["margen"])
+        cuerpo.append(
+            html.Tr(
+                [
+                    html.Td(fila["categoria"]),
+                    html.Td(fila["territorio"]),
+                    html.Td(str(fila["anio"])),
+                    html.Td(moneda(fila["importe"]), className="num"),
+                    html.Td(margen, className="num"),
+                ]
+            )
+        )
+    return html.Div(
+        className="tabla-marco",
+        children=[html.Table(className="tabla", children=[cabecera, html.Tbody(cuerpo)])],
+    )
+
+
+def contenido_cliente(anio, territorio, categoria, tema="claro"):
+    tema = tema_valido(tema)
+    anio = int(anio) if anio is not None and anio != "" else None
+    territorio = territorio or None
+    categoria = categoria or None
+    clientes_corte = filas_corte(CLIENTE["clientes"], territorio, categoria, anio)
+    productos_corte = filas_corte(CLIENTE["productos"], territorio, categoria, anio)
+    if not clientes_corte or not productos_corte:
+        return html.P(
+            "Este corte no tiene ventas por internet. El total sigue en Control.",
+            className="nota",
+        )
+
+    clientes = agrupar(clientes_corte, ("cliente", "nombre"))
+    clientes.sort(key=lambda fila: (-fila["importe"], fila["nombre"], fila["cliente"]))
+    categorias = agrupar(productos_corte, ("categoria",))
+    categorias.sort(key=lambda fila: (-fila["margen"], fila["categoria"]))
+    productos = agrupar(productos_corte, ("producto",))
+    productos.sort(key=lambda fila: (-fila["margen"], fila["producto"]))
+    combos = agrupar(productos_corte, ("categoria", "territorio", "anio"))
+    combos.sort(
+        key=lambda fila: (-fila["importe"], fila["categoria"], fila["territorio"], fila["anio"])
+    )
+    visibles_clientes = clientes[:TOP_CLIENTES]
+    visibles_productos = productos[:TOP_PRODUCTOS]
+    visibles_combos = combos[:TOP_COMBINACIONES]
+    importe = a_decimal(sum((fila["importe"] for fila in clientes), Decimal("0")))
+    lineas = sum(fila["lineas"] for fila in clientes)
+    margen = a_decimal(sum((fila["margen"] for fila in clientes), Decimal("0")))
+    importe_coste = a_decimal(sum((fila["importe_coste"] for fila in clientes), Decimal("0")))
+    lineas_coste = sum(fila["lineas_coste"] for fila in clientes)
+    importe_top = a_decimal(sum((fila["importe"] for fila in visibles_clientes), Decimal("0")))
+    precio = (importe / lineas).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    categoria_foco = categorias[0]
+    combo = visibles_combos[0]
+    hay_corte = anio is not None or bool(territorio) or bool(categoria)
+    etiquetas = etiquetas_clientes(visibles_clientes)
+    alcance_clientes = "del canal internet" if not hay_corte else "de este corte"
+    if not hay_corte:
+        nota = (
+            "Canal internet. Los principales son los 10 clientes de mayor importe. "
+            "El precio medio es el importe de la línea. "
+            "El margen solo suma las líneas que tienen coste. "
+            "La barra amarilla marca el máximo. "
+            "La tabla ordena por importe y el margen va en su propia columna."
+        )
+    else:
+        nota = (
+            f"Corte: {descripcion_corte(anio, territorio, categoria)}. "
+            "No sustituye al total de internet; ese sigue en Control. "
+            f"Los principales son los {len(visibles_clientes)} clientes de mayor importe en este corte. "
+            "El precio medio es el importe de la línea. "
+            "El margen solo suma las líneas que tienen coste. "
+            "La barra amarilla marca el máximo."
+        )
+    if lineas_coste == 0:
+        tarjeta_margen = tarjeta(
+            "Margen",
+            "Sin coste",
+            "Este corte no tiene líneas con coste",
+            "tarjeta tarjeta-informe",
+        )
+        frase_margen = "Este corte no tiene líneas con coste, así que no hay margen."
+    else:
+        tarjeta_margen = tarjeta(
+            "Margen",
+            moneda(margen),
+            (
+                f"{formato_parte(parte(margen, importe_coste))} del importe con coste. "
+                + cobertura_coste(lineas, lineas_coste)
+            ),
+            "tarjeta tarjeta-informe",
+        )
+        frase_margen = (
+            f"El margen es {moneda(margen)}, "
+            f"el {formato_parte(parte(margen, importe_coste))} del importe de las líneas con coste. "
+            + cobertura_coste(lineas, lineas_coste)
+        )
+    titulo_productos = "Productos de mayor margen"
+    if categoria:
+        titulo_productos = f"Productos de mayor margen en {categoria}"
+    cierre = (
+        f"En este corte compran {formato_lineas(len(clientes))} clientes. "
+        f"Los {len(visibles_clientes)} de mayor importe suman {moneda(importe_top)}, "
+        f"el {formato_parte(parte(importe_top, importe))} {alcance_clientes}. "
+        f"El precio medio de la línea es {moneda(precio)}. "
+        f"{frase_margen} "
+        f"{categoria_foco['categoria']} explica el margen"
+        + (
+            f": {moneda(categoria_foco['margen'])}, "
+            f"el {formato_parte(parte(categoria_foco['margen'], margen))}."
+            if lineas_coste
+            else "."
+        )
+        + " "
+        f"La combinación de mayor importe es {combo['categoria']}, {combo['territorio']} "
+        f"y {combo['anio']}: {moneda(combo['importe'])} de importe y "
+        + (
+            f"{moneda(combo['margen'])} de margen."
+            if combo["lineas_coste"]
+            else "sin margen, porque no tiene coste."
+        )
+    )
+    return html.Div(
+        children=[
+            html.P(nota, className="nota"),
+            html.Div(
+                className="kpis",
+                children=[
+                    tarjeta(
+                        "Clientes",
+                        formato_lineas(len(clientes)),
+                        "Compran en internet" if not hay_corte else "Compran en este corte",
+                        "tarjeta tarjeta-informe",
+                    ),
+                    tarjeta(
+                        f"Los {len(visibles_clientes)} principales",
+                        formato_parte(parte(importe_top, importe)),
+                        moneda(importe_top),
+                        "tarjeta tarjeta-informe",
+                    ),
+                    tarjeta(
+                        "Precio medio",
+                        moneda(precio),
+                        "Importe medio de la línea",
+                        "tarjeta tarjeta-informe",
+                    ),
+                    tarjeta_margen,
+                ],
+            ),
+            html.Div(
+                className="graficos",
+                children=[
+                    grafico_barras(
+                        f"Los {len(visibles_clientes)} clientes de mayor importe",
+                        figura_horizontal(
+                            etiquetas,
+                            [fila["importe"] for fila in visibles_clientes],
+                            colores_lider(etiquetas, etiquetas[0], tema),
+                            alto_barras(len(etiquetas)),
+                            tema=tema,
+                            divisor=1,
+                            titulo_eje="USD",
+                            modo_eje="libre",
+                        ),
+                    ),
+                    grafico_barras(
+                        "Margen por categoría",
+                        figura_horizontal(
+                            [fila["categoria"] for fila in categorias],
+                            [fila["margen"] for fila in categorias],
+                            colores_lider(
+                                [fila["categoria"] for fila in categorias],
+                                categoria_foco["categoria"],
+                                tema,
+                            ),
+                            alto_barras(max(len(categorias), 3)),
+                            textos_parte([fila["margen"] for fila in categorias]),
+                            tema,
+                        ),
+                    ),
+                ],
+            ),
+            grafico_barras(
+                titulo_productos,
+                figura_horizontal(
+                    [fila["producto"] for fila in visibles_productos],
+                    [fila["margen"] for fila in visibles_productos],
+                    colores_lider(
+                        [fila["producto"] for fila in visibles_productos],
+                        visibles_productos[0]["producto"],
+                        tema,
+                    ),
+                    alto_barras(len(visibles_productos)),
+                    tema=tema,
+                ),
+            ),
+            html.H3("Categoría, territorio y año"),
+            html.P(
+                "Ocho combinaciones de mayor importe. El margen es otra columna "
+                "y solo entra si la línea tiene coste.",
+                className="nota",
+            ),
+            tabla_combinaciones(visibles_combos),
+            html.P(cierre, className="conclusion"),
+        ],
+    )
+
+
+def vista_cliente() -> html.Div:
+    if CLIENTE is None:
+        aviso = ERROR_DATOS or "No hay conexión con SQL Server Express."
+        opciones = {"anios": [], "territorios": [], "categorias": []}
+        detalle = html.P(aviso, className="nota")
+    else:
+        opciones = CLIENTE["opciones"]
+        detalle = contenido_cliente(None, None, None)
+    return html.Div(
+        id="vista-cliente",
+        style={"display": "none"},
+        children=[
+            html.Section(
+                className="bloque informe",
+                children=[
+                    pregunta(
+                        "¿Cuántos clientes compran en internet, qué parte del importe "
+                        "acumulan los principales, cuál es el precio medio y cuál es el margen?"
+                    ),
+                    titulo("cliente", "Clientes, precio y margen"),
+                    html.P(
+                        "Al abrir, el corte es todo el canal internet. "
+                        "Es la vista que responde el informe. "
+                        "Los principales son los 10 clientes de mayor importe. "
+                        "El precio medio es el importe de la línea. "
+                        "El margen solo suma las líneas que tienen coste. "
+                        "La tabla junta categoría, territorio del pedido y año. "
+                        "Después se puede cambiar el año natural, el territorio o la categoría. "
+                        "Vacío significa todos.",
+                        className="nota",
+                    ),
+                    html.Div(
+                        className="filtros",
+                        children=[
+                            desplegable("Año natural", "cliente-anio", opciones["anios"]),
+                            desplegable(
+                                "Territorio del pedido",
+                                "cliente-territorio",
+                                opciones["territorios"],
+                            ),
+                            desplegable("Categoría", "cliente-categoria", opciones["categorias"]),
+                        ],
+                    ),
+                    html.Button(
+                        "Todo internet",
+                        id="cliente-limpiar",
+                        n_clicks=0,
+                        className="limpiar",
+                    ),
+                    html.Div(id="cliente-detalle", children=detalle),
+                ],
+            )
+        ],
+    )
+
+
 app = Dash(
     __name__,
     assets_folder=str(Path(__file__).resolve().parent / "assets"),
@@ -1491,6 +2059,12 @@ app.layout = html.Div(
                     n_clicks=0,
                     className="nav",
                 ),
+                html.Button(
+                    "Clientes, precio y margen",
+                    id="nav-cliente",
+                    n_clicks=0,
+                    className="nav",
+                ),
             ],
         ),
         html.Div(
@@ -1536,10 +2110,13 @@ app.layout = html.Div(
         vista_control(),
         vista_tiempo(),
         vista_producto(),
+        vista_cliente(),
         html.Div(id="reajuste", style={"display": "none"}),
         html.Div(id="reajuste-filtros", style={"display": "none"}),
         html.Div(id="reajuste-producto", style={"display": "none"}),
         html.Div(id="reajuste-producto-filtros", style={"display": "none"}),
+        html.Div(id="reajuste-cliente", style={"display": "none"}),
+        html.Div(id="reajuste-cliente-filtros", style={"display": "none"}),
     ],
 )
 
@@ -1549,24 +2126,28 @@ app.layout = html.Div(
     Output("vista-control", "style"),
     Output("vista-tiempo", "style"),
     Output("vista-producto", "style"),
+    Output("vista-cliente", "style"),
     Output("nav-proceso", "className"),
     Output("nav-control", "className"),
     Output("nav-tiempo", "className"),
     Output("nav-producto", "className"),
+    Output("nav-cliente", "className"),
     Input("nav-proceso", "n_clicks"),
     Input("nav-control", "n_clicks"),
     Input("nav-tiempo", "n_clicks"),
     Input("nav-producto", "n_clicks"),
+    Input("nav-cliente", "n_clicks"),
 )
-def cambiar_pagina(proceso, control, tiempo, producto):
+def cambiar_pagina(proceso, control, tiempo, producto, cliente):
     oculto = {"display": "none"}
     visible = {"display": "block"}
-    estilos = [oculto, oculto, oculto, oculto]
-    clases = ["nav", "nav", "nav", "nav"]
+    estilos = [oculto, oculto, oculto, oculto, oculto]
+    clases = ["nav", "nav", "nav", "nav", "nav"]
     indice = {
         "nav-control": 1,
         "nav-tiempo": 2,
         "nav-producto": 3,
+        "nav-cliente": 4,
     }.get(ctx.triggered_id, 0)
     estilos[indice] = visible
     clases[indice] = "nav activo"
@@ -1620,6 +2201,31 @@ def actualizar_producto(anio, territorio, categoria, tema):
     prevent_initial_call=True,
 )
 def limpiar_producto(_clics):
+    return None, None, None
+
+
+@callback(
+    Output("cliente-detalle", "children"),
+    Input("cliente-anio", "value"),
+    Input("cliente-territorio", "value"),
+    Input("cliente-categoria", "value"),
+    Input("tema", "data"),
+)
+def actualizar_cliente(anio, territorio, categoria, tema):
+    if CLIENTE is None:
+        aviso = ERROR_DATOS or "No hay conexión con SQL Server Express."
+        return html.P(aviso, className="nota")
+    return contenido_cliente(anio, territorio, categoria, tema)
+
+
+@callback(
+    Output("cliente-anio", "value"),
+    Output("cliente-territorio", "value"),
+    Output("cliente-categoria", "value"),
+    Input("cliente-limpiar", "n_clicks"),
+    prevent_initial_call=True,
+)
+def limpiar_cliente(_clics):
     return None, None, None
 
 
@@ -1686,6 +2292,39 @@ app.clientside_callback(
     """,
     Output("reajuste-producto-filtros", "children"),
     Input("producto-detalle", "children"),
+)
+
+
+app.clientside_callback(
+    """
+    function(estilo) {
+        if (!estilo || estilo.display === "none") {
+            return window.dash_clientside.no_update;
+        }
+        window.requestAnimationFrame(function() {
+            window.dispatchEvent(new Event("resize"));
+        });
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reajuste-cliente", "children"),
+    Input("vista-cliente", "style"),
+)
+
+
+app.clientside_callback(
+    """
+    function() {
+        window.requestAnimationFrame(function() {
+            window.requestAnimationFrame(function() {
+                window.dispatchEvent(new Event("resize"));
+            });
+        });
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("reajuste-cliente-filtros", "children"),
+    Input("cliente-detalle", "children"),
 )
 
 

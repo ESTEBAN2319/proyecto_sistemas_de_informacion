@@ -6,9 +6,9 @@ La pregunta de la asignatura es:
 
 > ¿Cuál es el importe de las ventas por categoría de producto, territorio y año?
 
-El informe se queda con las ventas por internet y enseña el importe en cuatro partes: tiempo, producto, territorio, y la combinación de categoría, territorio y año.
+El informe se queda con las ventas por internet. El dashboard lo reparte en cinco páginas: proceso, control, tiempo, producto y territorio, y clientes, precio y margen.
 
-No se calcula margen, ni flete, ni impuesto, ni se analizan clientes. Más abajo se explica por qué.
+El flete y el impuesto no entran en el hecho. El margen sí, y solo con las líneas que tienen coste. En internet todas lo tienen.
 
 ## Dos totales que no se pueden mezclar
 
@@ -38,8 +38,8 @@ Se trabaja en SQL Server Express, instancia `localhost\SQLEXPRESS`, con autentic
 - OLTP: `AdventureWorks2025`. Guarda los pedidos tal como se hacen.
 - Data warehouse: `AdventureWorks_DWH`. Guarda los datos ya preparados para analizar.
 - ETL: `etl/load_dwh.py`. Pasa los datos de una base a la otra.
-- Vista de internet: `vw_FactInternetSales`. Se queda solo con el canal internet.
-- Dashboard: `dashboard.py`. Muestra los cuatro bloques.
+- Canal: `Fact_Sales.Channel`. El dashboard se queda con `Internet`.
+- Dashboard: `dashboard.py`. Cinco páginas sobre el canal internet.
 
 El dashboard no lee el OLTP. Lee el almacén. Así no hay que unir las tablas del pedido cada vez que se mueve un filtro.
 
@@ -97,7 +97,7 @@ Por ese mismo grano se dejaron fuera el flete y el impuesto. `Freight` y `TaxAmt
 - `Dim_Customer`: persona o tienda. Sale de `Customer`, `Person` y `Store`.
 - `Dim_Territory`: territorio del pedido. Sale de `SalesOrderHeader`.
 
-`Dim_Customer` está cargada, pero este dashboard no la usa. La pregunta no es quién compró.
+`Dim_Customer` se usa en la página de clientes. El canal no sale de esta tabla: sale de `OnlineOrderFlag`.
 
 ### Clave de negocio y clave subrogada
 
@@ -115,6 +115,10 @@ La clave subrogada es un entero nuevo: `ProductKey`, `CustomerKey`, `TerritoryKe
 - `UnitPrice`: precio unitario.
 - `DiscountPct`: descuento. En origen se llama `UnitPriceDiscount`.
 - `SalesAmount`: importe de la línea. En origen es `LineTotal`.
+- `Channel`: `Internet` si `OnlineOrderFlag` es 1, y `Resto` si es 0.
+- `UnitCost`: coste estándar vigente en la fecha del pedido. Si no hay vigencia, queda vacío.
+- `LineCost`: `UnitCost * OrderQty`. Vacío si no hay coste.
+- `Margin`: `SalesAmount - LineCost`. Vacío si no hay coste. La línea de venta se conserva.
 
 `SalesAmount` es un `DECIMAL(19,4)`. `LineTotal` tiene más decimales, así que en la carga y en la comprobación se redondea con `CAST(LineTotal AS decimal(19,4))`. Si no, las sumas no cuadran por los céntimos.
 
@@ -130,7 +134,7 @@ La fecha se genera. `Dim_Date` va desde el primer pedido hasta un año después 
 
 También se calculó el año fiscal. En AdventureWorks empieza el 1 de julio. De julio a diciembre, el año fiscal es el año normal más uno. De enero a junio, coinciden. En el dashboard se usa `CalendarYear`, el año normal, porque la pregunta dice «año». Si se mezclaran los dos, el gráfico diría otra cosa.
 
-No se metió el coste. El coste que hay hoy en el producto no es el coste de una venta de hace años. Para el margen haría falta `ProductCostHistory`, el coste de aquella fecha. Como no se hizo, no se habla de rentabilidad.
+El coste sale de `Production.ProductCostHistory`: la fila cuya vigencia contiene la fecha del pedido. El coste de la línea es ese `StandardCost` por las unidades. El margen es el importe menos ese coste. Si no hay coste vigente, coste y margen quedan vacíos y la línea sigue en el hecho. En internet hay coste en las 60.398 líneas. En el resto, 64 líneas se quedan sin coste.
 
 ## 3. El ETL
 
@@ -148,7 +152,7 @@ OLTP  ->  consulta SQL (ya unida)  ->  Pandas (limpieza)
 
 Los `JOIN` se hacen en SQL Server. Pandas no vuelve a unir producto, subcategoría y categoría. Eso lo haría peor y podría duplicar filas.
 
-Pandas limpia: los nulos y los textos vacíos pasan a `Desconocido`. También decide el tipo de cliente. Si tiene persona, el tipo es `Person` y el nombre es nombre y apellido. Si no, el tipo es `Store` y el nombre es el de la tienda.
+Pandas limpia: los nulos y los textos vacíos pasan a `Desconocido`. También decide el tipo de cliente. Si tiene tienda, el tipo es `Store` y el nombre es el de la tienda. Si no, y tiene persona, el tipo es `Person` y el nombre es nombre y apellido.
 
 Los importes se convierten a decimal en la consulta. No se pasan por un float de Python, porque se pierden céntimos.
 
@@ -194,70 +198,88 @@ El canal está en `Sales.SalesOrderHeader.OnlineOrderFlag`. Si vale 1, el pedido
 - El resto: 60.919 líneas y 80.487.704,2043 USD.
 - Total: 121.317 líneas y 109.846.381,4250 USD.
 
-`Fact_Sales` se queda con los dos. Para el informe se creó la vista `vw_FactInternetSales` (`sql/07_vista_ventas_internet.sql`). Una vista no copia las filas: es una consulta con nombre. Esta devuelve `Fact_Sales` filtrada a internet. El filtro se hace en SQL. El dashboard no vuelve a mirar la cabecera del pedido en cada clic.
+`Fact_Sales` guarda los dos canales en `Channel`. El dashboard lee esa columna y se queda con `Internet`. No vuelve a la cabecera del pedido en cada clic. `vw_FactInternetSales` sigue en `sql/07_vista_ventas_internet.sql`, pero el dashboard no la usa: esa vista une otra vez el OLTP.
 
 ```text
-Fact_Sales  +  OnlineOrderFlag = 1  ->  vw_FactInternetSales  ->  dashboard
+Fact_Sales.Channel = Internet  ->  dashboard
 ```
 
-No se usa `CustomerType` para separar el canal. Hay 635 clientes que tienen persona y tienda a la vez, y el ETL los marca como `Person` porque tienen `PersonID`. El canal válido es `OnlineOrderFlag`.
+No se usa `CustomerType` para separar el canal. Si el cliente tiene tienda, el tipo es `Store`. Si no, y tiene persona, el tipo es `Person`. El canal válido es `OnlineOrderFlag`, guardado en `Fact_Sales.Channel`.
 
 En internet, `OrderQty` siempre es 1. Las unidades y las líneas dan el mismo número, así que en el dashboard se enseñan líneas e importe, no las unidades como si fueran otra cosa.
 
 ## 6. El dashboard
 
-`dashboard.py` al abrirse hace una consulta: une `vw_FactInternetSales` con `Dim_Date`, `Dim_Product` y `Dim_Territory`. Esas 60.398 filas se quedan en memoria. Los filtros recortan eso y actualizan los gráficos. No vuelven al OLTP.
-
-Si no hay 60.398 líneas, o el importe no es 29.358.677,2207 USD, el programa no arranca. Así no se cuela el total de los dos canales.
+`dashboard.py` lee `AdventureWorks_DWH`. El canal sale de `Fact_Sales.Channel`. Si internet no trae 60.398 líneas y 29.358.677,2207 USD, el programa no arranca.
 
 ```text
 python dashboard.py
 ```
 
-Se abre en `http://127.0.0.1:8050/`. Sin filtros, la primera tarjeta tiene que poner 29.358.677,22 USD.
+Se abre en `http://127.0.0.1:8050/`. La primera página es el proceso. En Control, sin filtros, tienen que verse 60.398 líneas y 29.358.677,22 USD. El total del almacén, 109.846.381,4250 USD, se cita aparte y no es la venta por internet.
 
-Los filtros de año, territorio y categoría valen para los cuatro bloques. Si se elige un año, la tarjeta ya no enseña el total de control, enseña el de ese año. Para volver al número de control se dejan los filtros vacíos.
+Cada página de análisis tiene sus propios filtros de año natural, territorio del pedido y categoría. Vacío significa todo internet. Un filtro no sustituye la cifra de Control.
 
-Las capturas de abajo son el dashboard sin ningún filtro.
+### Proceso
 
-![Tarjetas del informe](imagenes/tarjetas.png)
+De dónde sale el pedido y por qué el informe se queda con internet.
 
-Arriba se ve el control de la entrega: 29.358.677,22 USD y 60.398 líneas. El año con más importe es 2024 y el territorio con más importe es Australia.
+### Control
+
+Importe y líneas del canal internet. Al lado, el almacén completo y el otro canal.
 
 ### Tiempo
 
-![Importe por año y por mes](imagenes/tiempo.png)
+Año de mayor importe, variación contra el año anterior, mes de mayor importe y mes de menor. El mes va de enero a diciembre. 2024 es el año más alto, con 10.781.537,78 USD. Mayo es el mes más alto (3.208.299,29 USD) y junio el más bajo (1.851.396,23 USD).
 
-A la izquierda, el importe de cada año. 2024 es el más alto, con 10.781.537,78 USD. A la derecha, el importe de cada mes, ordenado de enero a diciembre y no por el nombre del mes. Mayo es el mes más alto (3.208.299,29 USD) y junio el más bajo (1.851.396,23 USD).
+### Producto y territorio
+
+La categoría que explica el importe, los productos de esa categoría y el territorio del pedido. Casi todo el importe está en Bikes. Australia es el territorio del pedido con más importe.
+
+### Clientes, precio y margen
+
+18.484 clientes compran en internet. Los 10 de mayor importe suman 132.026,40 USD, el 0,45 % del canal: la venta está repartida. El precio medio de la línea es 486,09 USD. El margen es 12.080.883,65 USD, el 41,15 % del importe, y entra en las 60.398 líneas porque todas tienen coste.
+
+La tabla corta ordena categoría, territorio y año por importe. La primera fila es Bikes, Australia, 2024, con 3.154.931,64 USD de importe y 1.276.906,46 USD de margen. Son dos columnas distintas.
+
+## Cifras del canal
+
+Las capturas están en `documentacion/imagenes`. En GitHub se ven con esa ruta, relativa a este archivo. Fijan las cifras de internet. La pantalla actual reparte esas preguntas en páginas.
+
+![Tarjetas del informe](documentacion/imagenes/tarjetas.png)
+
+29.358.677,22 USD y 60.398 líneas. El año con más importe es 2024 y el territorio con más importe es Australia.
+
+### Tiempo
+
+![Importe por año y por mes](documentacion/imagenes/tiempo.png)
+
+A la izquierda, el importe de cada año. A la derecha, el importe de cada mes, ordenado de enero a diciembre.
 
 ### Producto
 
-![Importe por categoría y diez productos](imagenes/producto.png)
+![Importe por categoría y diez productos](documentacion/imagenes/producto.png)
 
-Casi todo el importe está en la categoría Bikes. Accessories y Clothing se ven, pero pesan poco al lado. A la derecha, los diez productos con más importe: las variantes de Mountain-200 van por delante y después aparecen las Road-150.
+Casi todo el importe está en Bikes. Accessories y Clothing pesan poco al lado. Los productos de mayor importe son variantes de Mountain-200 y, después, Road-150.
 
 ### Territorio
 
-![Importe por territorio](imagenes/territorio.png)
+![Importe por territorio](documentacion/imagenes/territorio.png)
 
-El territorio es el del pedido. Australia concentra el importe. Detrás van Southwest, Northwest, United Kingdom, Germany, France y Canada. Southeast, Northeast y Central casi no tienen venta por internet, por eso la barra no se aprecia.
+El territorio es el del pedido. Australia concentra el importe. Detrás van Southwest, Northwest, United Kingdom, Germany, France y Canada.
 
 ### Categoría, territorio y año
 
-![Matriz de categoría y año, y combinaciones](imagenes/decision.png)
+![Matriz de categoría y año, y combinaciones](documentacion/imagenes/decision.png)
 
-La matriz responde la pregunta de la asignatura. En filas está la categoría y en columnas el año. El color oscuro es más importe. La franja de Bikes es la que se ve, y 2024 es el año más oscuro. Accessories y Clothing quedan casi en blanco.
-
-La tabla lista las 15 combinaciones de categoría, territorio y año con más importe. La primera es Bikes, Australia, 2024, con 3.154.931,64 USD. Las siguientes siguen siendo bicicletas: cambia el territorio o el año, no la categoría.
+La combinación de mayor importe es Bikes, Australia, 2024, con 3.154.931,64 USD. En la página de clientes ese número es el importe. El margen de esa misma fila es 1.276.906,46 USD.
 
 ## 7. Lo que quedó fuera
 
-- Margen y coste: el coste de hoy no sirve para una venta antigua.
-- Flete e impuesto: están en la cabecera y se repetirían en cada línea.
-- Clientes: la dimensión está cargada, pero la pregunta no va de clientes.
-- Crecimiento respecto al año anterior: el gráfico enseña el importe por año. No se calculó el porcentaje.
-- Año fiscal: está en `Dim_Date`, pero los gráficos usan el año normal.
-- El otro canal: sigue en `Fact_Sales`. La vista del dashboard lo quita.
+- Flete e impuesto: están en la cabecera. Si se copiaran en cada línea, se repetirían.
+- Potencial de crecimiento: no es una columna del origen y el dashboard no lo calcula.
+- Año fiscal: está en `Dim_Date`, pero los gráficos usan el año natural.
+- El otro canal: sigue en `Fact_Sales`. El informe enseña internet. En Control, el almacén completo se cita aparte.
 
 ## 8. Para volver a hacerlo
 
@@ -267,6 +289,6 @@ La tabla lista las 15 combinaciones de categoría, territorio y año con más im
 4. `python etl/load_dwh.py`, y otra vez. Las dos veces: 121.317 líneas y 109.846.381,4250 USD
 5. `sql/07_vista_ventas_internet.sql`. Tiene que dar 60.398 líneas y 29.358.677,2207 USD
 6. `sql/06_verificacion_final.sql`. Las 14 pruebas en OK
-7. `python dashboard.py`. Sin filtros, la tarjeta pone 29.358.677,22 USD
+7. `python dashboard.py`. En Control, sin filtros: 60.398 líneas y 29.358.677,22 USD
 
 Para cerrar: 121.317 líneas y 109.846.381,4250 USD demuestran que el ETL cargó todo. 60.398 líneas y 29.358.677,22 USD son las ventas por internet y el número del informe.

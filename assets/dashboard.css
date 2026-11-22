@@ -32,7 +32,36 @@ body {
     font-family: "Segoe UI", sans-serif;
 }
 
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image: url("ciclista.png");
+    background-repeat: no-repeat;
+    background-position: right 4vw center;
+    background-size: min(860px, 72vw) auto;
+    opacity: 0.2;
+}
+
+[data-tema="oscuro"] body::before {
+    filter: invert(1);
+    opacity: 0.26;
+}
+
+#particulas {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
 .pagina {
+    position: relative;
+    z-index: 1;
     max-width: 1180px;
     margin: 0 auto;
     padding: 28px 20px 48px;
@@ -271,6 +300,7 @@ label {
 .icono-almacen { --dibujo: url("/assets/icono-almacen.svg"); }
 .icono-calendario { --dibujo: url("/assets/icono-calendario.svg"); }
 .icono-territorio { --dibujo: url("/assets/icono-territorio.svg"); }
+.icono-cliente { --dibujo: url("/assets/icono-cliente.svg"); }
 
 .bloque h3 {
     margin: 18px 0 0;
@@ -322,6 +352,35 @@ label {
     margin: 12px 0 0;
     font-size: 15px;
     line-height: 1.45;
+}
+
+.tabla-marco {
+    overflow-x: auto;
+    margin-top: 8px;
+}
+
+.tabla {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.tabla th,
+.tabla td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--linea);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.tabla th {
+    color: var(--texto-suave);
+    font-weight: 650;
+}
+
+.tabla .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
 }
 
 .dash-dropdown {
@@ -387,5 +446,14 @@ label {
 
     .temas {
         margin-top: 14px;
+    }
+
+    body::before {
+        opacity: 0.1;
+        background-position: right -12vw center;
+    }
+
+    [data-tema="oscuro"] body::before {
+        opacity: 0.16;
     }
 }
