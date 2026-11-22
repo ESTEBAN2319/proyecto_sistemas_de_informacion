@@ -13,7 +13,7 @@
     document.body.appendChild(canvas);
     var contexto = canvas.getContext("2d", { alpha: true });
     var partes = [];
-    var cantidad = 26;
+    var cantidad = 54;
     var ancho = 0;
     var alto = 0;
     var activo = true;
@@ -22,18 +22,19 @@
     function colores() {
         var oscuro = document.documentElement.getAttribute("data-tema") === "oscuro";
         if (oscuro) {
-            return ["rgba(223,248,74,0.32)", "rgba(197,208,184,0.24)", "rgba(244,247,239,0.18)"];
+            return ["rgba(223,248,74,0.72)", "rgba(244,247,239,0.55)", "rgba(197,208,184,0.62)"];
         }
-        return ["rgba(23,32,22,0.22)", "rgba(74,104,22,0.26)", "rgba(125,143,98,0.2)"];
+        return ["rgba(47,74,18,0.62)", "rgba(74,104,22,0.7)", "rgba(23,32,22,0.48)"];
     }
 
     function nacer(desdeAbajo) {
+        var juntoAlCiclista = Math.random() < 0.62;
         return {
-            x: ancho * (0.46 + Math.random() * 0.52),
-            y: desdeAbajo ? alto + 6 : Math.random() * alto,
-            r: 0.7 + Math.random() * 1.5,
-            v: 7 + Math.random() * 12,
-            drift: -8 + Math.random() * 5,
+            x: juntoAlCiclista ? ancho * (0.38 + Math.random() * 0.6) : Math.random() * ancho,
+            y: desdeAbajo ? alto + 8 : Math.random() * alto,
+            r: 1.35 + Math.random() * 2.15,
+            v: 16 + Math.random() * 26,
+            drift: -14 + Math.random() * 10,
             tono: Math.floor(Math.random() * 3),
         };
     }
