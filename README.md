@@ -31,7 +31,7 @@ Antes de Python hacen falta tres programas.
 
 Las librerías de Python están en `requirements.txt`: `pandas`, `pyodbc`, `dash` y `plotly`. Se instalan con `pip install -r requirements.txt`.
 
-## Cómo está montado
+## ¿Cómo está hecho?
 
 Se trabaja en SQL Server Express, instancia `localhost\SQLEXPRESS`, con autenticación de Windows.
 

@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 568" role="img" aria-labelledby="titulo desc">
+  <title id="titulo">Del pedido al informe</title>
+  <desc id="desc">AdventureWorks2025 se extrae, se transforma y se carga en el almacén en estrella. El informe usa solo el canal internet.</desc>
+  <defs>
+    <marker id="punta" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#dff84a"/>
+    </marker>
+    <filter id="brillo" x="-20%" y="-40%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#dff84a" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <rect width="1080" height="568" rx="12" fill="#10140c"/>
+  <line x1="48" y1="122" x2="1032" y2="122" stroke="#2a3324" stroke-width="2"/>
+
+  <g font-family="Segoe UI, sans-serif">
+    <g>
+      <rect x="24" y="28" width="228" height="188" rx="8" fill="#171d14" stroke="#3d4a32"/>
+      <rect x="24" y="28" width="4" height="188" fill="#dff84a"/>
+      <text x="44" y="56" fill="#dff84a" font-size="12" font-weight="700">01</text>
+      <text x="44" y="84" fill="#f4f7ef" font-size="20" font-weight="650">Pedidos</text>
+      <text x="44" y="108" fill="#dff84a" font-size="13">AdventureWorks2025</text>
+      <text x="44" y="140" fill="#c5d0b8" font-size="13">SalesOrderHeader</text>
+      <text x="44" y="160" fill="#c5d0b8" font-size="13">SalesOrderDetail</text>
+      <text x="44" y="180" fill="#c5d0b8" font-size="13">OnlineOrderFlag</text>
+    </g>
+    <g>
+      <rect x="292" y="28" width="228" height="188" rx="8" fill="#171d14" stroke="#3d4a32"/>
+      <rect x="292" y="28" width="4" height="188" fill="#dff84a"/>
+      <text x="312" y="56" fill="#dff84a" font-size="12" font-weight="700">02</text>
+      <text x="312" y="84" fill="#f4f7ef" font-size="20" font-weight="650">Extraer</text>
+      <text x="312" y="108" fill="#dff84a" font-size="13">Una fila por línea</text>
+      <text x="312" y="140" fill="#c5d0b8" font-size="13">JOIN en SQL Server</text>
+      <text x="312" y="160" fill="#c5d0b8" font-size="13">LineTotal</text>
+      <text x="312" y="180" fill="#c5d0b8" font-size="13">decimal(19,4)</text>
+    </g>
+    <g>
+      <rect x="560" y="28" width="228" height="188" rx="8" fill="#171d14" stroke="#3d4a32"/>
+      <rect x="560" y="28" width="4" height="188" fill="#dff84a"/>
+      <text x="580" y="56" fill="#dff84a" font-size="12" font-weight="700">03</text>
+      <text x="580" y="84" fill="#f4f7ef" font-size="20" font-weight="650">Transformar</text>
+      <text x="580" y="108" fill="#dff84a" font-size="13">El canal sale del pedido</text>
+      <text x="580" y="140" fill="#c5d0b8" font-size="13">Flag 1 = Internet</text>
+      <text x="580" y="160" fill="#c5d0b8" font-size="13">Flag 0 = Resto</text>
+      <text x="580" y="180" fill="#c5d0b8" font-size="13">DateKey AAAAMMDD</text>
+    </g>
+    <g>
+      <rect x="828" y="28" width="228" height="188" rx="8" fill="#171d14" stroke="#dff84a"/>
+      <rect x="828" y="28" width="4" height="188" fill="#dff84a"/>
+      <text x="848" y="56" fill="#dff84a" font-size="12" font-weight="700">04</text>
+      <text x="848" y="84" fill="#f4f7ef" font-size="20" font-weight="650">Cargar</text>
+      <text x="848" y="108" fill="#dff84a" font-size="13">AdventureWorks_DWH</text>
+      <text x="848" y="140" fill="#c5d0b8" font-size="13">Claves IDENTITY</text>
+      <text x="848" y="160" fill="#c5d0b8" font-size="13">MERGE</text>
+      <text x="848" y="180" fill="#c5d0b8" font-size="13">Hecho y dimensiones</text>
+    </g>
+
+    <line x1="256" y1="122" x2="284" y2="122" stroke="#dff84a" stroke-width="2" marker-end="url(#punta)"/>
+    <line x1="524" y1="122" x2="552" y2="122" stroke="#dff84a" stroke-width="2" marker-end="url(#punta)"/>
+    <line x1="792" y1="122" x2="820" y2="122" stroke="#dff84a" stroke-width="2" marker-end="url(#punta)"/>
+
+    <text x="24" y="258" fill="#dff84a" font-size="12" font-weight="700" letter-spacing="1.6">ESQUEMA EN ESTRELLA</text>
+    <text x="620" y="258" fill="#dff84a" font-size="12" font-weight="700" letter-spacing="1.6">CANAL DEL PEDIDO</text>
+
+    <g>
+      <line x1="290" y1="318" x2="290" y2="364" stroke="#dff84a" stroke-width="1.5"/>
+      <line x1="186" y1="393" x2="206" y2="393" stroke="#dff84a" stroke-width="1.5"/>
+      <line x1="374" y1="393" x2="394" y2="393" stroke="#dff84a" stroke-width="1.5"/>
+      <line x1="290" y1="434" x2="290" y2="468" stroke="#dff84a" stroke-width="1.5"/>
+
+      <rect x="206" y="276" width="168" height="42" rx="8" fill="#171d14" stroke="#dff84a"/>
+      <text x="290" y="302" fill="#f4f7ef" font-size="14" text-anchor="middle">Dim_Date</text>
+
+      <rect x="24" y="372" width="162" height="42" rx="8" fill="#171d14" stroke="#dff84a"/>
+      <text x="105" y="398" fill="#f4f7ef" font-size="14" text-anchor="middle">Dim_Product</text>
+
+      <rect x="206" y="364" width="168" height="70" rx="8" fill="#dff84a" filter="url(#brillo)"/>
+      <text x="290" y="392" fill="#10140c" font-size="16" font-weight="700" text-anchor="middle">Fact_Sales</text>
+      <text x="290" y="412" fill="#10140c" font-size="11" text-anchor="middle">línea de detalle</text>
+
+      <rect x="394" y="372" width="176" height="42" rx="8" fill="#171d14" stroke="#dff84a"/>
+      <text x="482" y="398" fill="#f4f7ef" font-size="14" text-anchor="middle">Dim_Customer</text>
+
+      <rect x="206" y="468" width="168" height="42" rx="8" fill="#171d14" stroke="#dff84a"/>
+      <text x="290" y="494" fill="#f4f7ef" font-size="14" text-anchor="middle">Dim_Territory</text>
+    </g>
+
+    <g>
+      <rect x="620" y="286" width="436" height="108" rx="8" fill="#171d14" stroke="#dff84a" stroke-width="1.5" filter="url(#brillo)"/>
+      <text x="644" y="324" fill="#dff84a" font-size="22" font-weight="700">Internet</text>
+      <text x="644" y="350" fill="#c5d0b8" font-size="14">OnlineOrderFlag = 1</text>
+      <text x="644" y="372" fill="#f4f7ef" font-size="14">Entra en el informe</text>
+
+      <rect x="620" y="410" width="436" height="100" rx="8" fill="#171d14" stroke="#3d4a32"/>
+      <text x="644" y="448" fill="#f4f7ef" font-size="22" font-weight="700">Resto</text>
+      <text x="644" y="474" fill="#c5d0b8" font-size="14">OnlineOrderFlag = 0</text>
+      <text x="644" y="496" fill="#8b957e" font-size="14">Se queda en el almacén</text>
+    </g>
+  </g>
+</svg>
