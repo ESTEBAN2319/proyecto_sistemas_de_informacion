@@ -66,6 +66,58 @@ body {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 12px;
+    position: relative;
+    z-index: 5;
+}
+
+.limpiar {
+    margin-top: 12px;
+    border: 1px solid #2a3324;
+    background: transparent;
+    color: #c5d0b8;
+    font: inherit;
+    font-weight: 650;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.limpiar:hover {
+    background: #dff84a;
+    color: #10140c;
+}
+
+.filtros .Select-control {
+    background: #10140c;
+    border-color: #2a3324;
+    color: #f4f7ef;
+}
+
+.filtros .Select-placeholder,
+.filtros .Select--single > .Select-control .Select-value .Select-value-label,
+.filtros .Select-input > input {
+    color: #f4f7ef !important;
+}
+
+.filtros .Select-menu-outer {
+    background: #171d14;
+    border-color: #2a3324;
+    z-index: 20;
+}
+
+.filtros .VirtualizedSelectOption {
+    background: #171d14;
+    color: #f4f7ef;
+}
+
+.filtros .VirtualizedSelectFocusedOption,
+.filtros .VirtualizedSelectSelectedOption {
+    background: #2a3324;
+    color: #dff84a;
+}
+
+.filtros .is-focused:not(.is-open) > .Select-control {
+    border-color: #dff84a;
 }
 
 .kpis {
@@ -128,6 +180,16 @@ label {
     font-size: 20px;
 }
 
+.bloque h3 {
+    margin: 18px 0 0;
+    font-size: 16px;
+    font-weight: 650;
+}
+
+.informe {
+    border-color: #dff84a;
+}
+
 .diagrama {
     display: block;
     width: 100%;
@@ -139,12 +201,64 @@ label {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
+    min-width: 0;
+}
+
+.grafico {
+    min-width: 0;
+}
+
+.grafico .js-plotly-plot,
+.grafico .plot-container.plotly {
+    width: 100% !important;
 }
 
 .conclusion {
     margin: 12px 0 0;
     font-size: 15px;
     line-height: 1.45;
+}
+
+.dash-dropdown {
+    width: 100%;
+    box-sizing: border-box;
+    background: #10140c !important;
+    color: #f4f7ef !important;
+    border: 1px solid #2a3324 !important;
+    border-radius: 8px;
+    font: inherit;
+}
+
+.dash-dropdown-value,
+.dash-dropdown-placeholder,
+.dash-dropdown-trigger-icon {
+    color: #f4f7ef !important;
+}
+
+.dash-dropdown-content,
+.dash-dropdown-options {
+    background: #171d14 !important;
+    color: #f4f7ef !important;
+    border: 1px solid #2a3324;
+    border-radius: 8px;
+}
+
+.dash-dropdown-search {
+    background: #10140c !important;
+    color: #f4f7ef !important;
+    border: 1px solid #2a3324 !important;
+}
+
+.dash-dropdown-option,
+.dash-options-list-option {
+    color: #f4f7ef !important;
+}
+
+.dash-dropdown-option:hover,
+.dash-options-list-option:hover,
+.dash-dropdown-option[aria-selected="true"] {
+    background: #2a3324 !important;
+    color: #dff84a !important;
 }
 
 .Select-control,
